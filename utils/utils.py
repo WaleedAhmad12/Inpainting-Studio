@@ -2,6 +2,7 @@ from PIL import Image
 import numpy as np
 import gradio as gr
 import cv2
+import os
 from config import MASK_DIFF_THRESHOLD,MASK_DILATE_KERNEL,SD_IMAGE_SIZE,SD_MODEL_ID
 import torch
 from diffusers import StableDiffusionInpaintPipeline
@@ -44,12 +45,13 @@ def file_load_image(file):
         return None
 
 
-def enhance_prompt(prompt: str) -> str:
+## Rule-based enhancer (previous behaviour) kept as a fallback
+def _rule_enhance_prompt(prompt: str) -> str:
     if not prompt or not prompt.strip():
         return ""
-    
+
     prompt = prompt.strip()
-    
+
     # Inpainting-specific enhancements
     inpainting_context = [
         "seamless blending",
@@ -58,7 +60,7 @@ def enhance_prompt(prompt: str) -> str:
         "consistent style",
         "high quality details"
     ]
-    
+
     # Quality and realism enhancements
     quality_keywords = [
         "photorealistic",
@@ -67,12 +69,231 @@ def enhance_prompt(prompt: str) -> str:
         "natural lighting",
         "sharp focus"
     ]
-    
+
     # Build the enhanced prompt
     enhanced = ", ".join(quality_keywords) + ", " + prompt
     enhanced = enhanced + ", " + ", ".join(inpainting_context)
-    
+
     return enhanced
+
+
+# Groq API integration with fallback to rule-based enhancer
+# The function below is the public entrypoint used by the UI and pipeline.
+def enhance_prompt(prompt: str) -> str:
+    # Prefer environment variable for API key, fall back to hard-coded key if present
+    GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "REDACTED_GROQ_API_KEY")
+
+    if not prompt or not prompt.strip():
+        return _rule_enhance_prompt(prompt)
+
+    # Attempt to use Groq SDK synchronously. Any error falls back to rule-based enhancer.
+    try:
+        import groq
+
+        print("[PROMPT] groq module imported; version:", getattr(groq, "__version__", "unknown"))
+
+        # Try multiple constructor names to support different SDK versions
+        client = None
+        constructor_candidates = ["Client", "GroqClient", "Groq", "ClientV1"]
+        for name in constructor_candidates:
+            ctor = getattr(groq, name, None)
+            if ctor and callable(ctor):
+                try:
+                    client = ctor(api_key=GROQ_API_KEY)
+                    print(f"[PROMPT] Constructed Groq client using {name}")
+                    break
+                except Exception as e:
+                    print(f"[PROMPT] Groq constructor {name} failed: {repr(e)}")
+
+        # Try factory helpers
+        if client is None:
+            for fn in ("from_api_key", "connect", "create_client"):
+                factory = getattr(groq, fn, None)
+                if callable(factory):
+                    try:
+                        client = factory(GROQ_API_KEY)
+                        print(f"[PROMPT] Constructed Groq client using factory {fn}")
+                        break
+                    except Exception as e:
+                        print(f"[PROMPT] Groq factory {fn} failed: {repr(e)}")
+
+        if client is None:
+            raise RuntimeError("Unable to construct Groq client; no known constructors succeeded")
+
+        system_prompt = """
+    You are a Stable Diffusion INPAINTING prompt engineer.
+
+    Your job is to rewrite user prompts for image inpainting (object replacement or modification), NOT full image generation.
+
+    Rules:
+    - ONLY describe the object or content that should appear in the masked area
+    - DO NOT describe the full scene
+    - DO NOT add background, environment, or storytelling
+    - Keep it focused and concise
+    - Ensure the result blends naturally with the existing image
+    - Include: lighting match, perspective match, shadows, realism
+
+    Examples:
+
+    User: change book to laptop
+    Output: a realistic modern laptop, matching the scene lighting, perspective and shadows, seamless blend, high detail
+
+    User: make shirt red
+    Output: a red colored shirt with natural fabric texture, consistent lighting and shading, realistic
+
+    User: replace person with robot
+    Output: a humanoid robot, metallic texture, matching pose, lighting and perspective, realistic, seamless integration
+
+    Now rewrite the user prompt.
+    """
+
+        base_payload = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 1024,
+            "temperature": 0.2,
+        }
+
+        # Allow overriding the model via env var `GROQ_MODEL` for flexibility.
+        env_model = os.environ.get("GROQ_MODEL")
+        model_candidates = []
+        if env_model:
+            model_candidates.append(env_model)
+        # User-requested preferred model – try this first if available
+        model_candidates.append("llama-3.3-70b-versatile")
+        # Try a small list of candidate model names in case one is decommissioned.
+        model_candidates.extend([
+            "llama3-70b-8192",
+            "llama3-70b",
+            "llama3-13b",
+            "llama3-7b",
+        ])
+
+        method_attempts = [
+            ("generate", lambda c, p: c.generate(**p)),
+            ("run", lambda c, p: c.run(**p)),
+            ("chat", lambda c, p: c.chat(p)),
+            ("chat.create", lambda c, p: getattr(c, "chat").create(**p)),
+            ("chat.completions.create", lambda c, p: getattr(getattr(c, "chat", None), "completions").create(**p)),
+            ("completions.create", lambda c, p: getattr(c, "completions").create(**p)),
+            ("completions", lambda c, p: c.completions.create(**p) if hasattr(c, "completions") else c.completions(p)),
+        ]
+
+        resp = None
+        final_exc = None
+
+        for model_name in model_candidates:
+            payload = dict(base_payload)
+            payload["model"] = model_name
+            print(f"[PROMPT] Attempting Groq model: {model_name}")
+
+            last_exc = None
+            for name, fn in method_attempts:
+                try:
+                    resp = fn(client, payload)
+                    print(f"[PROMPT] Groq method succeeded: {name} (model={model_name})")
+                    break
+                except Exception as e:
+                    last_exc = e
+                    msg = repr(e)
+                    print(f"[PROMPT] Groq method {name} failed for model {model_name}: {msg}")
+                    # If the error explicitly says the model is decommissioned, stop trying
+                    if "decommissioned" in msg or "model_decommissioned" in msg:
+                        # mark this so outer loop will try the next model
+                        break
+
+            if resp is not None:
+                break
+
+            # If Groq reports the model is decommissioned, try the next candidate.
+            err_text = repr(last_exc) if last_exc is not None else ""
+            if "decommissioned" in err_text or "model_decommissioned" in err_text:
+                print(f"[PROMPT] Model {model_name} reported decommissioned; trying next candidate")
+                final_exc = last_exc
+                continue
+            # otherwise stop trying models and propagate the last error
+            final_exc = last_exc
+            break
+
+        if resp is None:
+            raise RuntimeError(f"All Groq method attempts failed: {repr(final_exc)}")
+
+        # Parse response defensively and extract only the assistant prompt text
+        enhanced_text = None
+
+        # 1) ChatCompletion-like objects with `choices`
+        try:
+            if hasattr(resp, "choices"):
+                choices = resp.choices
+                if isinstance(choices, (list, tuple)) and len(choices) > 0:
+                    first = choices[0]
+                    # Try common attributes on the choice
+                    if hasattr(first, "message") and hasattr(first.message, "content"):
+                        enhanced_text = first.message.content
+                    elif hasattr(first, "text"):
+                        enhanced_text = first.text
+                    elif isinstance(first, dict):
+                        enhanced_text = first.get("text") or (first.get("message") or {}).get("content")
+
+            # 2) Top-level message fields
+            if not enhanced_text and hasattr(resp, "message") and hasattr(resp.message, "content"):
+                enhanced_text = resp.message.content
+        except Exception:
+            enhanced_text = None
+
+        # 3) Dict-like responses
+        if not enhanced_text and isinstance(resp, dict):
+            enhanced_text = resp.get("text") or resp.get("output")
+            if not enhanced_text and "choices" in resp:
+                choices = resp.get("choices")
+                if isinstance(choices, list) and len(choices) > 0:
+                    first = choices[0]
+                    if isinstance(first, dict):
+                        enhanced_text = first.get("text") or (first.get("message") or {}).get("content")
+
+        # 4) Fallback: use the string representation only as a last resort
+        if not enhanced_text:
+            try:
+                s = str(resp)
+                enhanced_text = s.strip()
+            except Exception:
+                enhanced_text = None
+
+        if enhanced_text and isinstance(enhanced_text, str) and enhanced_text.strip():
+            cleaned = enhanced_text.strip()
+            try:
+                # Strip common Groq assistant prefaces while keeping the full prompt intact.
+                lowered = cleaned.lower()
+                if lowered.startswith("here is") or lowered.startswith("here's") or lowered.startswith("here’s"):
+                    parts = cleaned.split("\n\n", 1)
+                    if len(parts) > 1 and parts[1].strip():
+                        cleaned = parts[1].strip()
+                    else:
+                        colon_index = cleaned.find(":")
+                        if colon_index != -1 and colon_index + 1 < len(cleaned):
+                            cleaned = cleaned[colon_index + 1 :].strip()
+            except Exception:
+                pass
+
+            # Trim surrounding quotes if still present
+            if (cleaned.startswith('"') and cleaned.endswith('"')) or (cleaned.startswith("'") and cleaned.endswith("'")):
+                cleaned = cleaned[1:-1].strip()
+
+            print("[PROMPT] Using Groq AI enhancer")
+            return cleaned
+        else:
+            raise RuntimeError("Groq returned empty or unparseable response")
+
+    except Exception as e:
+        # Any exception (import error, API error, timeout, parsing) → fallback
+        print("[PROMPT] Groq failed, using fallback enhancer; error:", repr(e))
+        try:
+            return _rule_enhance_prompt(prompt)
+        except Exception:
+            # As a last resort, return the original prompt
+            return prompt.strip()
 
 
 def pil_to_numpy(img):
@@ -256,6 +477,10 @@ def _run_stable_diffusion(
     strength:     float,
 ) -> Image.Image | None:
 
+    if original_img is None or bw_mask is None:
+        gr.Warning("Please load an image and create a mask before inpainting.")
+        return None
+
     # Load the SD pipeline (from cache if already loaded)
     pipeline = get_sd_pipeline()
 
@@ -291,6 +516,10 @@ def inpainting(bw_mask, prompt, steps, guidance, strength):
         return None
 
     original_img = get_current_image()
+
+    if original_img is None:
+        gr.Warning("Please load an image first.")
+        return None
 
     bw_mask = normalize_mask_input(bw_mask, original_img)
 

@@ -1,3 +1,15 @@
+---
+title: Inpaint Studio
+emoji: 🎨
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: "6.14.0"
+python_version: "3.10"
+app_file: app.py
+pinned: false
+---
+
 # Inpaint Studio
 
 A Gradio-based image inpainting app that supports both manual brush masking and YOLO-powered auto masking.
@@ -68,3 +80,6 @@ Stable Diffusion Inpaint
     ↓
 Output Image
 ```
+
+
+REDACTED_GROQ_API_KEY
