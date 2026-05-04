@@ -1,0 +1,10 @@
+gradio>=4.0
+requests
+Pillow
+numpy
+opencv-python
+torch
+diffusers
+transformers
+accelerate
+ultralytics
