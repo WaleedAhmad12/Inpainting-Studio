@@ -3,6 +3,7 @@ import numpy as np
 import gradio as gr
 import cv2
 import os
+from dotenv import load_dotenv
 from config import MASK_DIFF_THRESHOLD,MASK_DILATE_KERNEL,SD_IMAGE_SIZE,SD_MODEL_ID
 import torch
 from diffusers import StableDiffusionInpaintPipeline
@@ -13,6 +14,10 @@ CURRENT_IMAGE: Image.Image | None = None
 
 def get_current_image():
     return CURRENT_IMAGE
+
+
+# Load environment variables from .env file (if present)
+load_dotenv()
 
 
 
@@ -80,8 +85,8 @@ def _rule_enhance_prompt(prompt: str) -> str:
 # Groq API integration with fallback to rule-based enhancer
 # The function below is the public entrypoint used by the UI and pipeline.
 def enhance_prompt(prompt: str) -> str:
-    # Prefer environment variable for API key, fall back to hard-coded key if present
-    GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "REDACTED_GROQ_API_KEY")
+    # Prefer environment variable for API key. Do NOT hard-code keys in source.
+    GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
     if not prompt or not prompt.strip():
         return _rule_enhance_prompt(prompt)
