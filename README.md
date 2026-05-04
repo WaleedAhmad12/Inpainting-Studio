@@ -81,5 +81,3 @@ Stable Diffusion Inpaint
 Output Image
 ```
 
-
-REDACTED_GROQ_API_KEY
