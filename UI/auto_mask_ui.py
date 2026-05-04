@@ -101,11 +101,7 @@ def combine_selected_masks(selected_labels):
 
 
 def preview_selected_objects(selected_labels: list[str]):
-    """Return an overlay preview (red overlay) for the selected labels.
 
-    This keeps the original preview helper available for the UI and for
-    callers that only want the overlay without regenerating the B&W mask.
-    """
     if not DETECTION_RESULTS:
         return gr.update(value=None), gr.update(visible=False)
 
@@ -118,7 +114,6 @@ def preview_selected_objects(selected_labels: list[str]):
 
 
 def create_mask_from_selection(selected_labels: list[str]):
-    """Generate both overlay preview and B&W mask from selected objects."""
     # Defensive checks
     if not DETECTION_RESULTS:
         return gr.update(value=None), gr.update(value=None)
@@ -143,8 +138,6 @@ def create_mask_from_selection(selected_labels: list[str]):
     # Return explicit gr.update for both overlay preview and B&W image
     return gr.update(value=overlay), gr.update(value=bw_mask)
 
-
-# confirm_and_get_mask removed; mask is generated automatically from selection
 
 
 def auto_masking_ui():

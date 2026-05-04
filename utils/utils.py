@@ -45,17 +45,6 @@ def file_load_image(file):
 
 
 def enhance_prompt(prompt: str) -> str:
-    """
-    Enhance a user prompt for better Stable Diffusion inpainting results.
-    
-    Adds photorealistic keywords, detail specifications, and inpainting-specific context.
-    
-    Args:
-        prompt: The original user prompt
-        
-    Returns:
-        Enhanced prompt string with additional context for better inpainting results
-    """
     if not prompt or not prompt.strip():
         return ""
     
@@ -131,7 +120,6 @@ def draw_red_overlay(original_np: np.ndarray, mask_np: np.ndarray) -> Image.Imag
 
 
 def cleanup_mask(mask: np.ndarray, min_area: int = 40) -> np.ndarray:
-    """Remove tiny mask speckles and smooth small artifacts."""
     if mask is None:
         return mask
 
@@ -226,12 +214,6 @@ def normalize_mask_input(mask_like, original_img):
 
 
 def get_sd_pipeline():
-    """
-    Return the Stable Diffusion pipeline, loading it first if needed.
-
-    device : "cuda" if you have an Nvidia GPU, "cpu" otherwise.
-    dtype  : float16 is faster/smaller on GPU; float32 needed on CPU.
-    """
     global _pipeline
 
     if _pipeline is None:
@@ -258,13 +240,6 @@ def get_sd_pipeline():
 
 
 def resize_for_sd(image: Image.Image, mask: Image.Image, size: int = 512):
-    """
-    Resize both the image and mask to the square size Stable Diffusion needs.
-
-    SD works at 512×512. If we pass a different size it gives bad results.
-    LANCZOS = high quality resize for the image.
-    NEAREST = no blurring for the mask (we want sharp black/white edges).
-    """
     image_resized = image.convert("RGB").resize((size, size), Image.LANCZOS)
     mask_resized  = mask.convert("L").resize((size, size), Image.NEAREST)
     return image_resized, mask_resized
