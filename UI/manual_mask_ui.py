@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 from PIL import Image
 from config import MASK_DIFF_THRESHOLD, MASK_DILATE_KERNEL, SD_DEFAULT_STEPS, SD_DEFAULT_BRUSH_SIZE
-from utils.utils import get_current_image, pil_to_numpy
+from utils.utils import get_current_image, pil_to_numpy, cleanup_mask
 
 
 
@@ -46,6 +46,9 @@ def generate_mask(canvas_image):
     )
     mask = cv2.dilate(mask, kernel, iterations=1)
 
+    # Remove tiny speckles and disconnected noise so the preview stays clean
+    mask = cleanup_mask(mask, min_area=250)
+
     bw_mask= Image.fromarray(mask)
 
     return bw_mask
@@ -75,7 +78,7 @@ def manual_masking_ui():
                 gr.Markdown("## Black & White Mask Preview")
                 bw_mask_preview = gr.Image(
                     label="",
-                    height=380,
+                    height=453,
                     interactive=False,  # read-only display
                 )
 

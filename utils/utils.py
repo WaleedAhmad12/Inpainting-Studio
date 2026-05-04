@@ -44,6 +44,47 @@ def file_load_image(file):
         return None
 
 
+def enhance_prompt(prompt: str) -> str:
+    """
+    Enhance a user prompt for better Stable Diffusion inpainting results.
+    
+    Adds photorealistic keywords, detail specifications, and inpainting-specific context.
+    
+    Args:
+        prompt: The original user prompt
+        
+    Returns:
+        Enhanced prompt string with additional context for better inpainting results
+    """
+    if not prompt or not prompt.strip():
+        return ""
+    
+    prompt = prompt.strip()
+    
+    # Inpainting-specific enhancements
+    inpainting_context = [
+        "seamless blending",
+        "matching scene lighting",
+        "correct perspective",
+        "consistent style",
+        "high quality details"
+    ]
+    
+    # Quality and realism enhancements
+    quality_keywords = [
+        "photorealistic",
+        "highly detailed",
+        "professional quality",
+        "natural lighting",
+        "sharp focus"
+    ]
+    
+    # Build the enhanced prompt
+    enhanced = ", ".join(quality_keywords) + ", " + prompt
+    enhanced = enhanced + ", " + ", ".join(inpainting_context)
+    
+    return enhanced
+
 
 def pil_to_numpy(img):
     
@@ -87,6 +128,27 @@ def draw_red_overlay(original_np: np.ndarray, mask_np: np.ndarray) -> Image.Imag
 
     preview = np.clip(preview, 0, 255).astype(np.uint8)
     return Image.fromarray(preview)
+
+
+def cleanup_mask(mask: np.ndarray, min_area: int = 40) -> np.ndarray:
+    """Remove tiny mask speckles and smooth small artifacts."""
+    if mask is None:
+        return mask
+
+    cleaned = mask.astype(np.uint8)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel, iterations=1)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(cleaned, connectivity=8)
+    filtered = np.zeros_like(cleaned)
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area >= min_area:
+            filtered[labels == i] = 255
+
+    return filtered
 
 
 

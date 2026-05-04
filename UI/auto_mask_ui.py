@@ -2,7 +2,7 @@ import gradio as gr
 from ultralytics import YOLO
 
 from config import SD_DEFAULT_STEPS, SD_DEFAULT_GUIDANCE, SD_DEFAULT_STRENGTH, YOLO_MODEL_NAME, DETECTION_ALPHA, PALETTE
-from utils.utils import get_current_image, pil_to_numpy,draw_red_overlay
+from utils.utils import get_current_image, pil_to_numpy, draw_red_overlay, cleanup_mask
 import numpy as np
 from PIL import Image, ImageDraw
 import cv2
@@ -82,7 +82,7 @@ def run_detection():
         "orig_np": orig,
     }
 
-    return annotated_pil, gr.update(choices=labels), gr.update(visible=False), gr.update(visible=False)
+    return annotated_pil, gr.update(choices=labels)
 
 def combine_selected_masks(selected_labels):
     data = DETECTION_RESULTS
@@ -97,23 +97,54 @@ def combine_selected_masks(selected_labels):
         if label in selected_labels:
             combined = cv2.bitwise_or(combined, mask)
 
-    return combined
-
-
-
+    return cleanup_mask(combined)
 
 
 def preview_selected_objects(selected_labels: list[str]):
-    data = DETECTION_RESULTS
+    """Return an overlay preview (red overlay) for the selected labels.
+
+    This keeps the original preview helper available for the UI and for
+    callers that only want the overlay without regenerating the B&W mask.
+    """
+    if not DETECTION_RESULTS:
+        return gr.update(value=None), gr.update(visible=False)
+
     combined_mask = combine_selected_masks(selected_labels)
-    overlay = draw_red_overlay(data["orig_np"], combined_mask)
-    return overlay, gr.update(visible=True)
+    overlay = draw_red_overlay(DETECTION_RESULTS["orig_np"], combined_mask)
+    return gr.update(value=overlay), gr.update(visible=True)
 
 
-def confirm_and_get_mask(selected_labels: list[str]):
+
+
+
+def create_mask_from_selection(selected_labels: list[str]):
+    """Generate both overlay preview and B&W mask from selected objects."""
+    # Defensive checks
+    if not DETECTION_RESULTS:
+        return gr.update(value=None), gr.update(value=None)
+
+    # Ensure selected_labels is a list
+    if selected_labels is None:
+        selected_labels = []
+    if isinstance(selected_labels, str):
+        selected_labels = [selected_labels]
+
+    # Generate combined mask from selected labels
     combined_mask = combine_selected_masks(selected_labels)
+
+    combined_mask = cleanup_mask(combined_mask)
+
+    # Create overlay preview (red overlay)
+    overlay = draw_red_overlay(DETECTION_RESULTS["orig_np"], combined_mask)
+
+    # Create B&W mask
     bw_mask = Image.fromarray(combined_mask)
-    return bw_mask, gr.update(visible=True)
+
+    # Return explicit gr.update for both overlay preview and B&W image
+    return gr.update(value=overlay), gr.update(value=bw_mask)
+
+
+# confirm_and_get_mask removed; mask is generated automatically from selection
 
 
 def auto_masking_ui():
@@ -134,33 +165,22 @@ def auto_masking_ui():
             
             with gr.Column(scale=1):
                 gr.Markdown("**Selection Preview** — red = will be inpainted")
-                overlay_preview = gr.Image(label="", height=250, interactive=False)
+                overlay_preview = gr.Image(label="", height=225, interactive=False)
 
-                confirm_btn = gr.Button(
-                    "✓ Confirm Selection",
-                    variant="primary",
-                    visible=False,
-                )
-
-                with gr.Column(visible=False) as bw_mask_row:
+                # Keep the mask panel visible so updates render immediately
+                with gr.Column(visible=True) as bw_mask_row:
                     gr.Markdown("**B&W Mask** — white = area to fill")
-                    bw_mask_image = gr.Image(label="", height=200, interactive=False)
+                    bw_mask_image = gr.Image(label="", height=225, interactive=False)
         
         detect_btn.click(
             fn=run_detection,
             inputs=[],
-            outputs=[detection_preview, object_checkboxes, confirm_btn, bw_mask_row],
+            outputs=[detection_preview, object_checkboxes],
         )
 
         object_checkboxes.change(
-            fn=preview_selected_objects,
+            fn=create_mask_from_selection,
             inputs=[object_checkboxes],
-            outputs=[overlay_preview, confirm_btn],
-        )
-
-        confirm_btn.click(
-            fn=confirm_and_get_mask,
-            inputs=[object_checkboxes],
-            outputs=[bw_mask_image, bw_mask_row],
+            outputs=[overlay_preview, bw_mask_image],
         )
     return bw_mask_image

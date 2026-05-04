@@ -1,8 +1,8 @@
 import gradio as gr
-from utils.utils import url_load_image, file_load_image,inpainting,get_mask_and_inpaint
+from utils.utils import url_load_image, file_load_image, inpainting, get_mask_and_inpaint, enhance_prompt
 from UI.manual_mask_ui import manual_masking_ui
 from UI.auto_mask_ui import auto_masking_ui
-from config import SD_DEFAULT_GUIDANCE,SD_DEFAULT_STEPS,SD_DEFAULT_STRENGTH
+from config import SD_DEFAULT_GUIDANCE, SD_DEFAULT_STEPS, SD_DEFAULT_STRENGTH
 
 
 with gr.Blocks(title="Inpaint Studio") as demo:
@@ -102,6 +102,16 @@ with gr.Blocks(title="Inpaint Studio") as demo:
     prompt_box = gr.Textbox(
         placeholder="Describe what should appear in the masked area…  e.g. 'a blue sky with clouds'",
         label="Prompt",
+        lines=2,
+    )
+
+    enhance_btn = gr.Button("✨ Enhance Prompt", size="lg")
+
+    # Event handler for prompt enhancement - updates the same textbox
+    enhance_btn.click(
+        fn=enhance_prompt,
+        inputs=prompt_box,
+        outputs=prompt_box,
     )
 
     with gr.Row():
@@ -125,4 +135,4 @@ with gr.Blocks(title="Inpaint Studio") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(share=True)
+    demo.launch()
